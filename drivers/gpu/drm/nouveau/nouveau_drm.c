@@ -742,14 +742,27 @@ static void quirk_broken_nv_runpm(struct pci_dev *pdev)
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct pci_dev *bridge = pci_upstream_bridge(pdev);
 
-	if (!bridge || bridge->vendor != PCI_VENDOR_ID_INTEL)
+	if (!bridge || (bridge->vendor != PCI_VENDOR_ID_INTEL && bridge->vendor != PCI_VENDOR_ID_AMD))
 		return;
 
-	switch (bridge->device) {
-	case 0x1901:
-		drm->old_pm_cap = pdev->pm_cap;
-		pdev->pm_cap = 0;
-		NV_INFO(drm, "Disabling PCI power management to avoid bug\n");
+	switch (bridge->vendor) {
+		case PCI_VENDOR_ID_INTEL:
+			switch (bridge->device) {
+			case 0x1901:
+				drm->old_pm_cap = pdev->pm_cap;
+				pdev->pm_cap = 0;
+				NV_INFO(drm, "Disabling PCI power management to avoid bug\n");
+				break;
+			}
+			break;
+		case PCI_VENDOR_ID_AMD:
+			switch (bridge->device) {
+			case 0x1633:
+				drm->old_pm_cap = pdev->pm_cap;
+				pdev->pm_cap = 0;
+				NV_INFO(drm, "nouveau: Disabling PCI power management to avoid bug on parent root %x\n", bridge->device);
+				break;
+			}
 		break;
 	}
 }
