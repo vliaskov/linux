@@ -4,7 +4,9 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_damage_helper.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_format_helper.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 
@@ -101,10 +103,13 @@ static void vkms_plane_atomic_update(struct drm_plane *plane,
 {
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
 									   plane);
+	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
 	struct vkms_plane_state *vkms_plane_state;
 	struct drm_shadow_plane_state *shadow_plane_state;
 	struct drm_framebuffer *fb = new_state->fb;
 	struct vkms_frame_info *frame_info;
+	struct drm_atomic_helper_damage_iter iter;
+	struct drm_rect damage;
 	u32 fmt;
 
 	if (!new_state->crtc || !fb)
@@ -115,8 +120,6 @@ static void vkms_plane_atomic_update(struct drm_plane *plane,
 	shadow_plane_state = &vkms_plane_state->base;
 
 	frame_info = vkms_plane_state->frame_info;
-	memcpy(&frame_info->src, &new_state->src, sizeof(struct drm_rect));
-	memcpy(&frame_info->dst, &new_state->dst, sizeof(struct drm_rect));
 	frame_info->fb = fb;
 	memcpy(&frame_info->map, &shadow_plane_state->data, sizeof(frame_info->map));
 	drm_framebuffer_get(frame_info->fb);
@@ -124,6 +127,19 @@ static void vkms_plane_atomic_update(struct drm_plane *plane,
 	frame_info->pitch = fb->pitches[0];
 	frame_info->cpp = fb->format->cpp[0];
 	vkms_plane_state->plane_read = get_frame_to_line_function(fmt);
+
+	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
+	drm_atomic_for_each_plane_damage(&iter, &damage) {
+		struct iosys_map dst = frame_info->map[0];
+		struct drm_rect dst_clip = new_state->dst;
+
+		if (!drm_rect_intersect(&dst_clip, &damage))
+			continue;
+
+		iosys_map_incr(&dst, drm_fb_clip_offset(frame_info->pitch, fb->format /*?*/, &dst_clip));
+		drm_fb_blit(&dst, frame_info->pitch, fb->format, shadow_plane_state->data, fb,
+			    &damage);
+	}
 }
 
 static int vkms_plane_atomic_check(struct drm_plane *plane,
@@ -202,6 +218,7 @@ struct vkms_plane *vkms_plane_init(struct vkms_device *vkmsdev,
 		return plane;
 
 	drm_plane_helper_add(&plane->base, funcs);
+	drm_plane_enable_fb_damage_clips(&plane->base);
 
 	return plane;
 }
